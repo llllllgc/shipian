@@ -1,0 +1,25 @@
+name: raw_jpg_picker
+description: 拾片 — 通过精选 JPG，找回对应 RAW。
+publish_to: none
+version: 0.4.0+5
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  file_selector: ^1.1.0
+  path: ^1.9.1
+  crypto: ^3.0.7
+  ffi: ^2.2.0
+  unorm_dart: ^0.3.1
+  path_provider: ^2.1.6
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
