@@ -38,6 +38,7 @@ class PickerController extends ChangeNotifier {
   RestoreResult? restoration;
   ConversionResult? conversion;
   CopyProgress? progress;
+  Future<void> Function()? closePreviews;
   String? error;
   String scanMessage = '';
   TaskPhase phase = TaskPhase.idle;
@@ -628,6 +629,7 @@ class PickerController extends ChangeNotifier {
     _token?.cancelled = true;
     await _operationDone;
     try {
+      await closePreviews?.call();
       await saveNow();
       await _lease?.close();
       _lease = null;

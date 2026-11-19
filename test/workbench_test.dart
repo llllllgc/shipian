@@ -5,6 +5,7 @@ import 'package:raw_jpg_picker/app_controller.dart';
 import 'package:raw_jpg_picker/core/models.dart';
 import 'package:raw_jpg_picker/main.dart';
 import 'package:raw_jpg_picker/ui/palette.dart';
+import 'package:raw_jpg_picker/ui/photo_stage.dart';
 import 'package:raw_jpg_picker/ui/workbench.dart';
 import 'package:raw_jpg_picker/ui/task_dialogs.dart';
 import 'package:raw_jpg_picker/ui/conversion_dialog.dart';
@@ -173,12 +174,16 @@ void main() {
       await tester.pumpWidget(const RawPickerApp());
       await tester.pumpAndSettle();
       expect(find.text('拾片'), findsOneWidget);
-      expect(find.text('未导入'), findsOneWidget);
+      expect(find.text('选择源文件夹'), findsOneWidget);
       expect(tester.takeException(), isNull);
-      final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, '归档'),
-      );
-      expect(button.onPressed, isNull);
+      expect(find.text('归档'), findsNothing);
+      await tester.tap(find.text('匹配归档'));
+      await tester.pumpAndSettle();
+      expect(find.text('已选 JPG'), findsOneWidget);
+      await tester.tap(find.text('选片整理'));
+      await tester.pumpAndSettle();
+      expect(find.text('选择源文件夹'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     });
   }
   testWidgets(
@@ -226,8 +231,21 @@ void main() {
       await tester.tap(find.text('DSC.jpg').first);
       await tester.pumpAndSettle();
       expect(find.text('选择 RAW'), findsOneWidget);
-      await tester.tap(find.text('A/DSC.NEF'));
+      tester.view.physicalSize = const Size(980, 730);
       await tester.pumpAndSettle();
+      final stage = find.byType(PhotoStage);
+      expect(tester.getRect(stage).width, greaterThan(490));
+      await tester.tap(find.byTooltip('预览 RAW').last);
+      await tester.pump();
+      expect(tester.widget<PhotoStage>(stage).entry.path, rawB.path);
+      expect(controller.plan!.selected, isEmpty);
+      expect(find.byType(Dialog), findsNothing);
+      await tester.tap(find.text('A/DSC.NEF'));
+      await tester.pump();
+      expect(tester.widget<PhotoStage>(stage).entry.path, rawA.path);
+      await tester.tap(find.text('JPG'));
+      await tester.pumpAndSettle();
+      expect(tester.widget<PhotoStage>(stage).entry.path, photo.path);
       expect(controller.plan!.selected.single.path, rawA.path);
       expect(find.text('1 RAW + 1 JPG'), findsOneWidget);
       await tester.tap(find.text('待确认').first);

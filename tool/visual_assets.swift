@@ -1,4 +1,4 @@
-// Code-drawn application icon and synthetic QA fixtures. No user photos used.
+// Desktop icon sizes are derived from the approved 1024 px artwork.
 import AppKit
 import Foundation
 
@@ -15,29 +15,15 @@ func bitmap(_ size: Int, draw: (CGContext) -> Void) -> NSBitmapImageRep {
   return image
 }
 
-func icon(_ context: CGContext) {
-  NSColor(calibratedRed: 0.13, green: 0.17, blue: 0.19, alpha: 1).setFill()
-  NSBezierPath(roundedRect: NSRect(x: 70, y: 70, width: 884, height: 884), xRadius: 200, yRadius: 200).fill()
-  NSColor.white.setStroke()
-  for (x, y, sx, sy) in [(285.0,285.0,1.0,1.0),(739.0,285.0,-1.0,1.0),
-    (285.0,739.0,1.0,-1.0),(739.0,739.0,-1.0,-1.0)] {
-    let path = NSBezierPath()
-    path.move(to: NSPoint(x:x, y:y+100*sy)); path.line(to: NSPoint(x:x,y:y))
-    path.line(to: NSPoint(x:x+100*sx,y:y)); path.lineWidth=30
-    path.lineCapStyle = .round; path.lineJoinStyle = .round; path.stroke()
-  }
-  NSColor(calibratedRed: 0.47, green: 0.77, blue: 0.62, alpha: 1).setFill()
-  let center = NSBezierPath()
-  center.move(to: NSPoint(x: 512, y: 660)); center.line(to: NSPoint(x: 660, y: 512))
-  center.line(to: NSPoint(x: 512, y: 364)); center.line(to: NSPoint(x: 364, y: 512))
-  center.close(); center.fill()
-  NSColor(calibratedRed: 0.13, green: 0.17, blue: 0.19, alpha: 1).setFill()
-  NSBezierPath(ovalIn: NSRect(x: 470, y: 470, width: 84, height: 84)).fill()
-}
-
 if CommandLine.arguments.dropFirst().first == "icon" {
   let directory = URL(fileURLWithPath: "macos/Runner/Assets.xcassets/AppIcon.appiconset")
-  for size in [16, 32, 64, 128, 256, 512, 1024] {
+  let master = try Data(contentsOf: directory.appendingPathComponent("app_icon_1024.png"))
+  guard let image = NSImage(data: master) else { fatalError("Invalid master icon") }
+  func icon(_ context: CGContext) {
+    NSGraphicsContext.current?.imageInterpolation = .high
+    image.draw(in: NSRect(x: 0, y: 0, width: 1024, height: 1024))
+  }
+  for size in [16, 32, 64, 128, 256, 512] {
     let data = bitmap(size, draw: icon).representation(using: .png, properties: [:])!
     try data.write(to: directory.appendingPathComponent("app_icon_\(size).png"))
   }

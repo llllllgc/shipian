@@ -1,6 +1,7 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import '../core/models.dart';
+import '../core/photo_preview.dart';
+import 'photo_viewer.dart';
 import 'palette.dart';
 import 'results_pane.dart';
 
@@ -11,148 +12,70 @@ class PreviewPane extends StatelessWidget {
     required this.index,
     required this.busy,
     required this.onChoose,
-    this.archivedPath,
+    required this.service,
+    this.archivedRaws = const {},
+    this.onExpand,
   });
   final MatchPlan? plan;
   final int? index;
   final bool busy;
   final ValueChanged<String?> onChoose;
-  final String? archivedPath;
+  final PhotoPreviewService service;
+  final Map<String, String> archivedRaws;
+  final ValueChanged<String>? onExpand;
 
   @override
   Widget build(BuildContext context) {
-    final item = plan != null && index != null && index! < plan!.items.length
-        ? plan!.items[index!]
-        : null;
+    final selected = index;
+    final item = plan == null || selected == null
+        ? null
+        : plan!.items[selected];
+    if (item == null) return const SizedBox.shrink();
     return ColoredBox(
-      color: Colors.white,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      color: Palette.surface,
+      child: ListView(
+        padding: const EdgeInsets.all(16),
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(20, 23, 20, 20),
-            child: Text(
-              '预览',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ),
+          const Text(
+            '配对信息',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
           ),
-          if (item == null)
-            const Expanded(
-              child: Center(
-                child: Padding(
-                  padding: EdgeInsets.all(25),
-                  child: Text(
-                    '选择照片',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      height: 1.9,
-                      color: Palette.muted,
-                    ),
-                  ),
-                ),
-              ),
-            )
-          else
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(6),
-                      child: AspectRatio(
-                        aspectRatio: 1.4,
-                        child: ColoredBox(
-                          color: const Color(0xFF1F252A),
-                          child: Image.file(
-                            File(archivedPath ?? item.jpg.path),
-                            fit: BoxFit.contain,
-                            cacheWidth: 1000,
-                            errorBuilder: (_, _, _) => const Center(
-                              child: Text(
-                                '无法预览',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  color: Colors.white60,
-                                  fontSize: 12,
-                                  height: 1.8,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    SelectableText(
-                      item.jpg.name,
-                      style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    StatusLabel(item: item),
-                    const SizedBox(height: 12),
-                    if (item.jpg.relativePath != item.jpg.name) ...[
-                      SelectableText(
-                        item.jpg.relativePath,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Palette.muted,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                    ],
-                    Text(
-                      formatBytes(item.jpg.size),
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: Palette.muted,
-                      ),
-                    ),
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 16),
-                      child: Divider(),
-                    ),
-                    _label(item.candidates.length > 1 ? '选择 RAW' : 'RAW'),
-                    const SizedBox(height: 10),
-                    if (item.candidates.isEmpty)
-                      const Text(
-                        '未找到 RAW',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Palette.muted,
-                          height: 1.9,
-                        ),
-                      ),
-                    if (item.candidates.length > 1)
-                      const Padding(
-                        padding: EdgeInsets.only(bottom: 12),
-                        child: Text(
-                          '选择一份，或跳过',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Palette.amber,
-                            height: 1.8,
-                          ),
-                        ),
-                      ),
-                    for (final raw in item.candidates)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: _candidate(raw, item),
-                      ),
-                    if (item.manuallyChosen)
-                      TextButton(
-                        onPressed: busy ? null : () => onChoose(null),
-                        child: const Text('跳过'),
-                      ),
-                  ],
-                ),
-              ),
+          const SizedBox(height: 20),
+          SelectableText(
+            item.jpg.name,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+          if (item.jpg.relativePath != item.jpg.name)
+            Text(
+              item.jpg.relativePath,
+              style: const TextStyle(fontSize: 12, color: Palette.muted),
+            ),
+          const SizedBox(height: 4),
+          Text(
+            formatBytes(item.jpg.size),
+            style: const TextStyle(fontSize: 12, color: Palette.muted),
+          ),
+          const SizedBox(height: 12),
+          StatusLabel(item: item),
+          const SizedBox(height: 20),
+          const Divider(),
+          const SizedBox(height: 16),
+          _label(item.candidates.length > 1 ? '选择 RAW' : '对应 RAW'),
+          const SizedBox(height: 10),
+          if (item.candidates.isEmpty)
+            const Text(
+              '未找到 RAW',
+              style: TextStyle(fontSize: 12, color: Palette.muted),
+            ),
+          for (final raw in item.candidates)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: _candidate(context, raw, item),
+            ),
+          if (item.manuallyChosen)
+            TextButton(
+              onPressed: busy ? null : () => onChoose(null),
+              child: const Text('跳过'),
             ),
         ],
       ),
@@ -168,10 +91,10 @@ class PreviewPane extends StatelessWidget {
     ),
   );
 
-  Widget _candidate(PhotoFile raw, MatchItem item) {
+  Widget _candidate(BuildContext context, PhotoFile raw, MatchItem item) {
     final selected = item.raw?.path == raw.path;
     return Material(
-      color: selected ? const Color(0xFFF0F6F2) : Palette.background,
+      color: selected ? Palette.background : Palette.background,
       borderRadius: BorderRadius.circular(7),
       child: InkWell(
         onTap: busy || item.candidates.length == 1
@@ -182,7 +105,7 @@ class PreviewPane extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             border: Border.all(
-              color: selected ? const Color(0xFFB9D4C7) : Palette.line,
+              color: selected ? Palette.selection : Palette.line,
             ),
             borderRadius: BorderRadius.circular(7),
           ),
@@ -196,7 +119,7 @@ class PreviewPane extends StatelessWidget {
                         ? Icons.check_circle
                         : Icons.radio_button_unchecked,
                     size: 15,
-                    color: selected ? Palette.green : Palette.muted,
+                    color: selected ? Palette.control : Palette.muted,
                   ),
                   const SizedBox(width: 8),
                   Expanded(
@@ -205,6 +128,27 @@ class PreviewPane extends StatelessWidget {
                       style: const TextStyle(fontSize: 12, height: 1.6),
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '预览 RAW',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () {
+                      final path = archivedRaws[raw.path] ?? raw.path;
+                      if (onExpand != null) {
+                        onExpand!(path);
+                      } else {
+                        showPhotoViewer(
+                          context,
+                          service: service,
+                          entries: [PreviewEntry(path)],
+                        );
+                      }
+                    },
+                    icon: const Icon(
+                      Icons.visibility_outlined,
+                      size: 17,
+                      color: Palette.muted,
                     ),
                   ),
                 ],

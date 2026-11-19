@@ -5,25 +5,40 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import '../app_controller.dart';
 import '../core/models.dart';
+import '../core/photo_preview.dart';
 import 'conversion_dialog.dart';
 import 'palette.dart';
 import 'preview_pane.dart';
+import 'photo_viewer.dart';
 import 'results_pane.dart';
 import 'task_dialogs.dart';
+import 'workspace.dart';
+import 'photo_stage.dart';
 
 class Workbench extends StatefulWidget {
-  const Workbench({super.key, this.controller});
+  const Workbench({super.key, this.controller, this.onCulling});
   final PickerController? controller;
+  final VoidCallback? onCulling;
   @override
   State<Workbench> createState() => _WorkbenchState();
 }
 
 class _WorkbenchState extends State<Workbench> {
   late final PickerController model = widget.controller ?? PickerController();
-  int? get selectedIndex => model.selectedIndex;
-  String get filter => model.filter;
-  String get query => model.query;
+  late final search = TextEditingController(text: model.query);
+  bool listMode = false, rawView = false;
+  String? candidatePath, candidateJpg;
+
   bool picking = false;
+  final previews = PhotoPreviewService();
+  Map<String, String> get archivedRaws => {
+    for (final receipt in model.result?.receipts ?? <ArchiveReceipt>[])
+      if (receipt.kind == PhotoKind.raw)
+        receipt.source.path: p.join(
+          model.result!.directory,
+          receipt.destinationRelativePath,
+        ),
+  };
   Map<String, String> get archivedJpgs => {
     for (final receipt in model.result?.receipts ?? <ArchiveReceipt>[])
       if (receipt.kind == PhotoKind.jpg)
@@ -32,14 +47,11 @@ class _WorkbenchState extends State<Workbench> {
           receipt.destinationRelativePath,
         ),
   };
-  String? get archivedPreview => selectedIndex == null || model.plan == null
-      ? null
-      : archivedJpgs[model.plan!.items[selectedIndex!].jpg.path];
-
   @override
   void initState() {
     super.initState();
     model.addListener(_changed);
+    model.closePreviews = previews.cancelPending;
     // Optional local test fixture; release builds have no synthetic photo library.
     const fixture = String.fromEnvironment('FIXTURE_ROOT');
     if (fixture.isNotEmpty) {
@@ -54,12 +66,16 @@ class _WorkbenchState extends State<Workbench> {
 
   void _changed() {
     if (!mounted) return;
+    if (search.text != model.query) search.text = model.query;
     setState(() {});
   }
 
   @override
   void dispose() {
+    search.dispose();
     model.removeListener(_changed);
+    model.closePreviews = null;
+    previews.close();
     if (widget.controller == null) model.dispose();
     super.dispose();
   }
@@ -172,6 +188,27 @@ class _WorkbenchState extends State<Workbench> {
           selectedOnly: settings.selectedOnly,
         );
       }
+    } finally {
+      if (mounted) setState(() => picking = false);
+    }
+  }
+
+  Future<void> _previewImages([String? path]) async {
+    if (picking || model.busy) return;
+    setState(() => picking = true);
+    try {
+      final entries = path == null || model.plan == null
+          ? <PreviewEntry>[]
+          : matchedPreviews(model.plan!, {...archivedJpgs, ...archivedRaws});
+      final index = path == null
+          ? 0
+          : entries.indexWhere((entry) => entry.path == path);
+      await showPhotoViewer(
+        context,
+        service: previews,
+        entries: entries,
+        initialIndex: index < 0 ? 0 : index,
+      );
     } finally {
       if (mounted) setState(() => picking = false);
     }
@@ -364,296 +401,280 @@ class _WorkbenchState extends State<Workbench> {
           },
         ),
       },
-      child: Focus(
-        autofocus: true,
-        child: Scaffold(
-          body: LayoutBuilder(
-            builder: (context, bounds) {
-              final compact = bounds.maxWidth < 1150;
-              return Row(
-                children: [
-                  SizedBox(width: compact ? 216 : 232, child: _sidebar()),
-                  const VerticalDivider(width: 1),
-                  Expanded(
-                    child: Column(
-                      children: [
-                        _header(),
-                        if (model.error != null) _errorBanner(),
-                        if (model.conversion != null)
-                          _conversionBanner()
-                        else if (model.result != null)
-                          _resultBanner(),
-                        Expanded(
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: ResultsPane(
-                                  plan: model.plan,
-                                  busy: model.phase == TaskPhase.scanning,
-                                  scanMessage: model.scanMessage,
-                                  selectedIndex: selectedIndex,
-                                  filter: filter,
-                                  query: query,
-                                  onFilter: (v) => model.updateView(status: v),
-                                  onQuery: (v) => model.updateView(search: v),
-                                  archivedJpgs: archivedJpgs,
-                                  onSelect: (v) =>
-                                      model.updateView(selected: v),
-                                ),
-                              ),
-                              if (!compact) ...[
-                                const VerticalDivider(width: 1),
-                                SizedBox(
-                                  width: 300,
-                                  child: PreviewPane(
-                                    plan: model.plan,
-                                    index: selectedIndex,
-                                    busy: !model.canChoose(selectedIndex),
-                                    archivedPath: archivedPreview,
-                                    onChoose: (value) =>
-                                        model.choose(selectedIndex!, value),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                        ),
-                        if (compact &&
-                            selectedIndex != null &&
-                            model.plan != null)
-                          _compactInspector(),
-                        _footer(),
-                      ],
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
+      child: Focus(autofocus: true, child: _workspace()),
     ),
   );
 
-  Widget _sidebar() => ColoredBox(
-    color: Palette.sidebar,
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(16, 22, 16, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.filter_center_focus,
-                size: 25,
-                color: Palette.ink,
-              ),
-              SizedBox(width: 9),
-              const Text(
-                '拾片',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-              ),
-              const Spacer(),
-              PopupMenuButton<String>(
-                tooltip: '任务',
-                enabled: !model.busy && !picking,
-                icon: const Icon(Icons.history, size: 20, color: Palette.muted),
-                onSelected: _taskAction,
-                itemBuilder: (context) => [
-                  const PopupMenuItem(value: 'history', child: Text('任务')),
-                  const PopupMenuItem(value: 'new', child: Text('新任务')),
-                  const PopupMenuItem(value: 'import', child: Text('打开归档')),
-                  if (model.jpgRoot != null || model.rawRoot != null)
-                    const PopupMenuItem(
-                      value: 'authorize',
-                      child: Text('授权目录'),
-                    ),
-                  if (model.canRestore)
-                    const PopupMenuItem(value: 'restore', child: Text('恢复原位置')),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 30),
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  _folderCard(
-                    '已选 JPG',
-                    model.jpgRoot,
-                    Icons.photo_outlined,
-                    () => _chooseFolder('JPG'),
-                  ),
-                  const SizedBox(height: 10),
-                  _folderCard(
-                    '全部 RAW',
-                    model.rawRoot,
-                    Icons.raw_on_outlined,
-                    () => _chooseFolder('RAW'),
-                  ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: model.canScan && !picking
-                          ? () {
-                              model.updateView(status: '全部', search: '');
-                              model.scan();
-                            }
-                          : null,
-                      icon: const Icon(Icons.sync, size: 16),
-                      label: Text(
-                        model.phase == TaskPhase.scanning
-                            ? '匹配中…'
-                            : model.plan == null
-                            ? '匹配'
-                            : model.result != null
-                            ? '更新匹配'
-                            : '重新匹配',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-                  _folderCard(
-                    '保存位置',
-                    model.outputRoot,
-                    Icons.folder_outlined,
-                    () => _chooseFolder('OUT'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: model.busy || picking ? null : _convertImages,
-              icon: const Icon(Icons.image_outlined, size: 17),
-              label: const Text('RAW 转图片'),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  Widget _folderCard(
-    String title,
-    String? path,
-    IconData icon,
-    VoidCallback tap,
-  ) => Tooltip(
-    message: path ?? '选择文件夹',
-    child: Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(7),
-      child: InkWell(
-        onTap: model.locked || picking ? null : tap,
-        borderRadius: BorderRadius.circular(7),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            border: Border.all(color: Palette.line),
-            borderRadius: BorderRadius.circular(7),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: const TextStyle(fontSize: 12, color: Palette.muted),
-              ),
-              const SizedBox(height: 9),
-              Row(
-                children: [
-                  Icon(
-                    icon,
-                    size: 17,
-                    color: path == null ? Palette.muted : Palette.green,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      path == null ? '选择文件夹' : p.basename(path),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 13),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  const Icon(
-                    Icons.chevron_right,
-                    size: 15,
-                    color: Palette.muted,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    ),
-  );
-
-  Widget _header() {
+  Widget _workspace() {
+    final enabled = !picking && !model.busy;
     final plan = model.plan;
-    final cleaned =
-        model.cleanup != null && model.cleanupPreview.targets.isEmpty;
-    final active = cleaned
-        ? 3
-        : model.result != null
-        ? 2
-        : plan != null
-        ? 1
-        : 0;
-    return Container(
-      height: 62,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Palette.line)),
-      ),
-      child: Row(
-        children: [
-          for (var i = 0; i < 3; i++) ...[
-            if (i > 0)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 14),
-                child: Icon(Icons.chevron_right, size: 14, color: Palette.line),
-              ),
-            Icon(
-              i < active ? Icons.check_circle : Icons.radio_button_unchecked,
-              size: 14,
-              color: i <= active ? Palette.green : Palette.muted,
+    final term = model.query.trim().toLowerCase();
+    final status = switch (model.filter) {
+      '已匹配' => MatchStatus.matched,
+      '待确认' => MatchStatus.conflict,
+      '未找到' => MatchStatus.missing,
+      _ => null,
+    };
+    final indices = <int>[
+      if (plan != null)
+        for (var i = 0; i < plan.items.length; i++)
+          if ((status == null || plan.items[i].status == status) &&
+              (term.isEmpty ||
+                  plan.items[i].jpg.relativePath.toLowerCase().contains(term) ||
+                  plan.items[i].candidates.any(
+                    (f) => f.relativePath.toLowerCase().contains(term),
+                  )))
+            i,
+    ];
+    final selected = indices.contains(model.selectedIndex)
+        ? model.selectedIndex
+        : indices.firstOrNull;
+    final item = selected == null ? null : plan!.items[selected];
+    final jpgs = archivedJpgs, raws = archivedRaws;
+    final candidate = item?.jpg.path == candidateJpg
+        ? item?.candidates
+              .where((f) => (raws[f.path] ?? f.path) == candidatePath)
+              .firstOrNull
+        : null;
+    final raw = candidate ?? item?.raw;
+    final showingRaw = rawView && raw != null;
+    final file = showingRaw ? raw : item?.jpg;
+    final path = file == null
+        ? null
+        : (showingRaw ? raws : jpgs)[file.path] ?? file.path;
+    void select(int index) {
+      candidatePath = candidateJpg = null;
+      model.updateView(selected: index);
+    }
+
+    return WorkspaceFrame(
+      mode: WorkspaceMode.archive,
+      onSwitch: enabled ? widget.onCulling : null,
+      title: model.jpgRoot == null ? '匹配归档' : p.basename(model.jpgRoot!),
+      toolbar: [
+        if (plan != null) ...[
+          Text(
+            '${plan.items.length} JPG / ${plan.rawCount} RAW',
+            style: const TextStyle(fontSize: 12, color: Palette.muted),
+          ),
+          const SizedBox(width: 12),
+          IconButton(
+            tooltip: listMode ? '查看照片' : '查看匹配列表',
+            onPressed: () => setState(() => listMode = !listMode),
+            icon: Icon(
+              listMode ? Icons.photo_outlined : Icons.view_list_outlined,
             ),
-            const SizedBox(width: 7),
-            Text(
-              ['匹配', '归档', '清理'][i],
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: i == active ? FontWeight.w600 : FontWeight.w400,
-                color: i <= active ? Palette.ink : Palette.muted,
-              ),
-            ),
+          ),
+        ],
+        PopupMenuButton<String>(
+          tooltip: '归档任务',
+          enabled: enabled,
+          icon: const Icon(Icons.history, size: 18),
+          onSelected: _taskAction,
+          itemBuilder: (_) => [
+            const PopupMenuItem(value: 'history', child: Text('历史任务')),
+            const PopupMenuItem(value: 'new', child: Text('新任务')),
+            const PopupMenuItem(value: 'import', child: Text('打开归档')),
+            if (model.jpgRoot != null || model.rawRoot != null)
+              const PopupMenuItem(value: 'authorize', child: Text('授权目录')),
+            if (model.canRestore)
+              const PopupMenuItem(value: 'restore', child: Text('恢复原位置')),
           ],
-          const Spacer(),
-          if (plan != null)
-            Text(
-              '${plan.items.length} JPG / ${plan.rawCount} RAW',
-              style: const TextStyle(fontSize: 12, color: Palette.muted),
+        ),
+      ],
+      sidebar: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SidebarHeading('归档目录'),
+          for (final (kind, label, root) in [
+            ('JPG', '已选 JPG', model.jpgRoot),
+            ('RAW', '全部 RAW', model.rawRoot),
+            ('OUT', '保存位置', model.outputRoot),
+          ])
+            SidebarRow(
+              label: label,
+              detail: root == null ? '选择文件夹' : p.basename(root),
+              tooltip: root ?? label,
+              icon: Icons.folder_outlined,
+              onTap: model.locked || picking ? null : () => _chooseFolder(kind),
             ),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: model.canScan && !picking
+                ? () {
+                    model.updateView(status: '全部', search: '');
+                    model.scan();
+                  }
+                : null,
+            icon: const Icon(Icons.sync, size: 16),
+            label: Text(
+              model.phase == TaskPhase.scanning
+                  ? '匹配中…'
+                  : plan == null
+                  ? '匹配'
+                  : model.result != null
+                  ? '更新匹配'
+                  : '重新匹配',
+            ),
+          ),
+          if (plan != null) ...[
+            const SizedBox(height: 16),
+            const SidebarHeading('匹配结果'),
+            TextField(
+              controller: search,
+              onChanged: (v) => model.updateView(search: v),
+              style: const TextStyle(fontSize: 12),
+              decoration: const InputDecoration(
+                hintText: '搜索文件名',
+                prefixIcon: Icon(Icons.search, size: 16),
+              ),
+            ),
+            const SizedBox(height: 6),
+            for (final (label, icon, count) in [
+              ('全部', Icons.grid_view_outlined, plan.items.length),
+              (
+                '已匹配',
+                Icons.check_circle_outline,
+                plan.count(MatchStatus.matched),
+              ),
+              ('待确认', Icons.help_outline, plan.count(MatchStatus.conflict)),
+              (
+                '未找到',
+                Icons.remove_circle_outline,
+                plan.count(MatchStatus.missing),
+              ),
+            ])
+              SidebarRow(
+                label: label,
+                icon: icon,
+                count: count,
+                selected: model.filter == label,
+                onTap: () => model.updateView(status: label),
+              ),
+          ],
         ],
       ),
+      tools: Column(
+        children: [
+          SidebarRow(
+            label: '图片预览',
+            icon: Icons.visibility_outlined,
+            onTap: enabled ? () => _previewImages() : null,
+          ),
+          SidebarRow(
+            label: 'RAW 转图片',
+            icon: Icons.transform,
+            onTap: enabled ? _convertImages : null,
+          ),
+        ],
+      ),
+      notice: Column(
+        children: [
+          if (model.error != null) _errorBanner(),
+          if (model.conversion != null)
+            _conversionBanner()
+          else if (model.result != null)
+            _resultBanner(),
+        ],
+      ),
+      content: model.phase == TaskPhase.scanning
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(model.scanMessage),
+                ],
+              ),
+            )
+          : plan == null
+          ? const WorkspaceEmpty(
+              title: '匹配 JPG 与 RAW',
+              hint: '在侧栏选择已选 JPG 和全部 RAW 文件夹，然后开始匹配。',
+            )
+          : item == null
+          ? const WorkspaceEmpty(title: '无结果', hint: '查看其他匹配状态，或调整搜索条件。')
+          : Row(
+              children: [
+                Expanded(
+                  child: listMode
+                      ? ResultsPane(
+                          plan: plan,
+                          indices: indices,
+                          selectedIndex: selected,
+                          archivedJpgs: jpgs,
+                          onSelect: select,
+                          onOpen: (index) {
+                            select(index);
+                            setState(() => listMode = false);
+                          },
+                        )
+                      : Column(
+                          children: [
+                            Expanded(
+                              child: PhotoStage(
+                                entry: PreviewEntry(
+                                  path!,
+                                  label: file!.relativePath,
+                                ),
+                                service: previews,
+                                showingRaw: showingRaw,
+                                onFormat: raw == null
+                                    ? null
+                                    : (value) =>
+                                          setState(() => rawView = value),
+                                onExpand: enabled
+                                    ? () => _previewImages(path)
+                                    : null,
+                              ),
+                            ),
+                            Filmstrip(
+                              position: indices.indexOf(selected!),
+                              count: indices.length,
+                              service: previews,
+                              entryAt: (i) {
+                                final jpg = plan.items[indices[i]].jpg;
+                                return PreviewEntry(
+                                  jpgs[jpg.path] ?? jpg.path,
+                                  label: jpg.relativePath,
+                                );
+                              },
+                              onSelect: (i) => select(indices[i]),
+                            ),
+                          ],
+                        ),
+                ),
+                const VerticalDivider(width: 1),
+                SizedBox(
+                  width: MediaQuery.sizeOf(context).width < 1150 ? 204 : 244,
+                  child: PreviewPane(
+                    plan: plan,
+                    index: selected,
+                    busy: !model.canChoose(selected),
+                    archivedRaws: raws,
+                    service: previews,
+                    onExpand: (value) => setState(() {
+                      candidatePath = value;
+                      candidateJpg = item.jpg.path;
+                      rawView = true;
+                      listMode = false;
+                    }),
+                    onChoose: (value) {
+                      candidatePath = candidateJpg = null;
+                      model.choose(selected!, value);
+                    },
+                  ),
+                ),
+              ],
+            ),
+      footer: _footer(),
     );
   }
 
   Widget _errorBanner() => Container(
     width: double.infinity,
-    color: const Color(0xFFFFF0EC),
+    color: Palette.surface,
     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
     child: SelectableText(
       model.error!,
@@ -682,14 +703,14 @@ class _WorkbenchState extends State<Workbench> {
         : '已清理 ${cleanup.deleted.length} 个源文件 · ${formatBytes(cleanup.reclaimedBytes)}';
     return Container(
       width: double.infinity,
-      color: good ? const Color(0xFFE8F3EE) : const Color(0xFFFFF3DF),
+      color: Palette.background,
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       child: Row(
         children: [
           Icon(
             good ? Icons.check_circle_outline : Icons.info_outline,
             size: 20,
-            color: good ? Palette.green : Palette.amber,
+            color: good ? Palette.control : Palette.amber,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -759,52 +780,11 @@ class _WorkbenchState extends State<Workbench> {
     );
   }
 
-  Widget _compactInspector() => Container(
-    color: Colors.white,
-    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-    child: Row(
-      children: [
-        Expanded(
-          child: Text(
-            model.plan!.items[selectedIndex!].jpg.name,
-            style: const TextStyle(fontSize: 12),
-            overflow: TextOverflow.ellipsis,
-          ),
-        ),
-        TextButton.icon(
-          onPressed: () => showDialog<void>(
-            context: context,
-            builder: (context) => Dialog(
-              child: SizedBox(
-                width: 450,
-                height: 600,
-                child: PreviewPane(
-                  plan: model.plan,
-                  index: selectedIndex,
-                  busy: !model.canChoose(selectedIndex),
-                  archivedPath: archivedPreview,
-                  onChoose: (value) {
-                    model.choose(selectedIndex!, value);
-                    Navigator.pop(context);
-                  },
-                ),
-              ),
-            ),
-          ),
-          icon: const Icon(Icons.open_in_full, size: 14),
-          label: const Text('预览'),
-        ),
-      ],
-    ),
-  );
-
   Widget _conversionBanner() {
     final conversion = model.conversion!;
     final failures = conversion.failures;
     return Container(
-      color: failures.isEmpty
-          ? const Color(0xFFE8F3EE)
-          : const Color(0xFFFFF3DF),
+      color: Palette.background,
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
       child: Row(
         children: [

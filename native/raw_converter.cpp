@@ -5,6 +5,9 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#include <algorithm>
+#include <cmath>
 
 #ifdef __APPLE__
 #include <CoreGraphics/CoreGraphics.h>
@@ -18,6 +21,34 @@ using Microsoft::WRL::ComPtr;
 
 static void require_raw(int code) {
   if (code != LIBRAW_SUCCESS) throw std::runtime_error(libraw_strerror(code));
+}
+
+// Preview files have a bounded size and are separate from full-size exports.
+static std::vector<unsigned char> preview_pixels(const libraw_processed_image_t& image,
+                                                unsigned& width, unsigned& height) {
+  const double scale = std::min(1.0, 2560.0 / std::max(image.width, image.height));
+  width = std::max(1u, static_cast<unsigned>(std::lround(image.width * scale)));
+  height = std::max(1u, static_cast<unsigned>(std::lround(image.height * scale)));
+  std::vector<unsigned char> pixels(static_cast<size_t>(width) * height * 3);
+  for (unsigned y = 0; y < height; ++y) {
+    for (unsigned x = 0; x < width; ++x) {
+      const double sx = (x + .5) * image.width / width - .5;
+      const double sy = (y + .5) * image.height / height - .5;
+      const unsigned x0 = static_cast<unsigned>(std::max(0.0, sx));
+      const unsigned y0 = static_cast<unsigned>(std::max(0.0, sy));
+      const unsigned x1 = std::min(x0 + 1, static_cast<unsigned>(image.width - 1));
+      const unsigned y1 = std::min(y0 + 1, static_cast<unsigned>(image.height - 1));
+      const double fx = std::max(0.0, sx - x0), fy = std::max(0.0, sy - y0);
+      for (unsigned c = 0; c < 3; ++c) {
+        const double top = image.data[(y0 * image.width + x0) * 3 + c] * (1-fx)
+                         + image.data[(y0 * image.width + x1) * 3 + c] * fx;
+        const double bottom = image.data[(y1 * image.width + x0) * 3 + c] * (1-fx)
+                            + image.data[(y1 * image.width + x1) * 3 + c] * fx;
+        pixels[(y * width + x) * 3 + c] = static_cast<unsigned char>(std::lround(top * (1-fy) + bottom * fy));
+      }
+    }
+  }
+  return pixels;
 }
 
 #ifdef __APPLE__
@@ -101,16 +132,18 @@ static void encode(const wchar_t* path, bool png, int quality,
 #ifdef __APPLE__
 int main(int argc, char** argv) {
   const bool png = argc == 5 && strcmp(argv[3], "png") == 0;
+  const bool preview = argc == 5 && strcmp(argv[3], "preview") == 0;
   const int quality = argc == 5 ? atoi(argv[4]) : 0;
-  const bool valid_format = argc == 5 && (png || strcmp(argv[3], "jpg") == 0);
+  const bool valid_format = argc == 5 && (png || preview || strcmp(argv[3], "jpg") == 0);
 #else
 int wmain(int argc, wchar_t** argv) {
   const bool png = argc == 5 && wcscmp(argv[3], L"png") == 0;
+  const bool preview = argc == 5 && wcscmp(argv[3], L"preview") == 0;
   const int quality = argc == 5 ? _wtoi(argv[4]) : 0;
-  const bool valid_format = argc == 5 && (png || wcscmp(argv[3], L"jpg") == 0);
+  const bool valid_format = argc == 5 && (png || preview || wcscmp(argv[3], L"jpg") == 0);
 #endif
   if (!valid_format || quality < 1 || quality > 100) {
-    fputs("Usage: shipian_raw_converter input output jpg|png quality\n", stderr);
+    fputs("Usage: shipian_raw_converter input output jpg|png|preview quality\n", stderr);
     return 2;
   }
   try {
@@ -121,6 +154,9 @@ int wmain(int argc, wchar_t** argv) {
     raw.imgdata.params.output_bps = 8;
     raw.imgdata.params.user_qual = 3; // full-resolution AHD; no embedded preview
     require_raw(raw.open_file(argv[1]));
+    if (preview && std::max(raw.imgdata.sizes.width, raw.imgdata.sizes.height) > 3000) {
+      raw.imgdata.params.half_size = 1;
+    }
     require_raw(raw.unpack());
     require_raw(raw.dcraw_process());
     int error = 0;
@@ -132,9 +168,25 @@ int wmain(int argc, wchar_t** argv) {
         static_cast<size_t>(image->width) * image->height * 3 != image->data_size) {
       throw std::runtime_error("Unsupported RAW pixel layout.");
     }
-    encode(argv[2], png, quality, *image);
+    unsigned width = image->width, height = image->height;
+    if (preview && std::max(width, height) > 2560) {
+      auto pixels = preview_pixels(*image, width, height);
+      // The processed bitmap header is variable-length; keep the owned LibRaw
+      // image intact and build another bounded bitmap for the system encoder.
+      const auto bytes = pixels.size();
+      auto scaled = std::unique_ptr<libraw_processed_image_t, decltype(&std::free)>(
+          static_cast<libraw_processed_image_t*>(std::malloc(sizeof(libraw_processed_image_t) + bytes)), &std::free);
+      if (!scaled) throw std::bad_alloc();
+      scaled->type = LIBRAW_IMAGE_BITMAP;
+      scaled->width = width; scaled->height = height;
+      scaled->colors = 3; scaled->bits = 8; scaled->data_size = static_cast<unsigned>(bytes);
+      std::memcpy(scaled->data, pixels.data(), bytes);
+      encode(argv[2], false, quality, *scaled);
+    } else {
+      encode(argv[2], png, quality, *image);
+    }
     printf("{\"width\":%u,\"height\":%u,\"engine\":\"LibRaw %s\"}\n",
-        image->width, image->height, LibRaw::version());
+        width, height, LibRaw::version());
     return 0;
   } catch (const std::exception& error) {
     fprintf(stderr, "%s\n", error.what());

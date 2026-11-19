@@ -60,9 +60,10 @@ abstract class RawDecoder {
 }
 
 class NativeRawDecoder implements RawDecoder {
-  NativeRawDecoder({String? executable})
+  NativeRawDecoder({String? executable, this.preview = false})
     : executable = executable ?? _bundledExecutable();
   final String executable;
+  final bool preview;
   static String _bundledExecutable() => Platform.isMacOS
       ? p.normalize(
           p.join(
@@ -92,7 +93,7 @@ class NativeRawDecoder implements RawDecoder {
     final process = await Process.start(executable, [
       input,
       output,
-      format.name,
+      preview ? 'preview' : format.name,
       '$quality',
     ]);
     final stdout = process.stdout.transform(utf8.decoder).join();

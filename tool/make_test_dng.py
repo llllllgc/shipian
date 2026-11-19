@@ -4,8 +4,7 @@ from pathlib import Path
 import struct
 import sys
 
-def make_dng(path, orientation=1):
-    w, h = 256, 192
+def make_dng(path, orientation=1, w=256, h=192):
     tags = {}
     def field(tag, kind, values):
         if kind == 2:
@@ -58,4 +57,4 @@ def make_dng(path, orientation=1):
                      b''.join(entries) + b'\0'*4 + extra + pixels)
 
 if __name__ == '__main__':
-    make_dng(sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 1)
+    make_dng(sys.argv[1], *map(int, sys.argv[2:]))

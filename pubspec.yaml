@@ -1,7 +1,7 @@
 name: raw_jpg_picker
-description: 拾片 — 通过精选 JPG，找回对应 RAW。
+description: 拾片 — 从混合目录看图选片，原地整理 JPG / RAW。
 publish_to: none
-version: 0.4.0+5
+version: 0.5.1+7
 
 environment:
   sdk: ^3.10.0
@@ -23,3 +23,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/brand/shipian-mark.png
