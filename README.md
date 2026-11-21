@@ -2,6 +2,10 @@
 
 从一个 JPG / RAW 混合文件夹看图选片，再原地分组整理。选片整理与匹配归档共用中央照片预览。
 
+拾片仅限个人非商业用途免费使用。处理付费订单或供公司使用须另行取得书面授权。
+
+[下载 macOS 版](https://github.com/llllllgc/shipian/releases/latest) · [从源码构建](#开发与打包) · [完整使用许可](LICENSE)
+
 ## 首页选片
 
 1. 先把内存卡中的全部 JPG 和 RAW 导出到同一个文件夹。
@@ -126,3 +130,9 @@ swift -module-cache-path /tmp/raw_picker_swift_cache tool/visual_assets.swift /t
 visual_assets.swift 生成的 RAW 为占位数据，仅供匹配测试；转换测试使用 test/fixtures/ 中的有效合成 DNG。参数换为 icon 可从 1024 像素主图重新生成 macOS 和 Windows 的各尺寸图标。
 
 内置引擎源码及许可见 native/THIRD_PARTY.md。Mac 的 Xcode 构建阶段自动编译并签名转换程序，Windows CMake 自动构建并随应用分发。源码及 CDDL 许可同时包含在应用的 ThirdParty 资源目录中。
+
+## 使用许可
+
+拾片公开源码，原创部分采用[个人非商业使用许可](LICENSE)。你可以免费整理个人照片，也可以自行编译、修改后自用。用于付费摄影订单、公司或其他组织，或对外分发原版或修改版，须另行取得书面授权。欢迎分享本仓库和官方下载链接。
+
+第三方组件按各自的许可证分发。本项目采用 CDDL 1.0 分发随附的 LibRaw 0.22.2。[第三方组件说明](native/THIRD_PARTY.md) · [LibRaw 版权声明](native/vendor/LibRaw-0.22.2/COPYRIGHT)
