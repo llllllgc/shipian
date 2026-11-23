@@ -77,12 +77,12 @@ void main() {
     () async {
       await file(raw, 'Day2/DSC_1.NEF', 'another RAW');
       var c = await started();
-      c.choose(0, p.join(raw, 'Day2/DSC_1.NEF'));
+      c.choose(0, p.join(raw, 'Day2', 'DSC_1.NEF'));
       c.updateView(selected: 0, status: '已匹配', search: 'DSC_1');
       final id = c.currentTaskId;
       c = await restart(c);
       expect(c.currentTaskId, id);
-      expect(c.plan!.items.single.raw!.path, p.join(raw, 'Day2/DSC_1.NEF'));
+      expect(c.plan!.items.single.raw!.path, p.join(raw, 'Day2', 'DSC_1.NEF'));
       expect(c.filter, '已匹配');
       expect(c.query, 'DSC_1');
       expect(c.selectedIndex, 0);
@@ -177,7 +177,7 @@ void main() {
         'original JPG',
       );
       expect(
-        await File(p.join(raw, 'Day1/DSC_1.NEF')).readAsString(),
+        await File(p.join(raw, 'Day1', 'DSC_1.NEF')).readAsString(),
         'original RAW',
       );
       expect(
@@ -255,8 +255,8 @@ void main() {
         p.join(c.result!.directory, 'RAW/Day1/DSC_1.NEF'),
       ).writeAsString('corrupt RAW!');
       await c.restoreSources({});
-      expect(c.restoration!.failures, contains(p.join(raw, 'Day1/DSC_1.NEF')));
-      expect(await File(p.join(raw, 'Day1/DSC_1.NEF')).exists(), isFalse);
+      expect(c.restoration!.failures, contains(p.join(raw, 'Day1', 'DSC_1.NEF')));
+      expect(await File(p.join(raw, 'Day1', 'DSC_1.NEF')).exists(), isFalse);
     },
   );
 
@@ -270,7 +270,7 @@ void main() {
       final outside = await Directory(p.join(fixture.path, 'outside')).create();
       await Link(p.join(raw, 'Day1')).create(outside.path);
       await c.restoreSources({});
-      expect(c.restoration!.failures, contains(p.join(raw, 'Day1/DSC_1.NEF')));
+      expect(c.restoration!.failures, contains(p.join(raw, 'Day1', 'DSC_1.NEF')));
       expect(await outside.list().length, 0);
     },
     skip: Platform.isWindows ? 'Symlinks need extra Windows privileges' : false,
@@ -362,7 +362,7 @@ void main() {
       expect(next.error, isNull);
       expect(next.cleanup!.deleted, [path]);
       expect(next.canRestore, isTrue);
-      expect(await File(p.join(raw, 'Day1/DSC_1.NEF')).exists(), isTrue);
+      expect(await File(p.join(raw, 'Day1', 'DSC_1.NEF')).exists(), isTrue);
     },
   );
 
@@ -460,7 +460,8 @@ void main() {
       await c.export();
       final state = c.snapshot;
       final root = c.result!.directory;
-      final relative = 'RAW/Day1/DSC_1.NEF.shipian-test.partial';
+      final destination = p.join('RAW', 'Day1', 'DSC_1.NEF');
+      final relative = '$destination.shipian-test.partial';
       final staging = await file(root, relative, 'partial');
       final unrelated = await file(
         root,
@@ -468,7 +469,7 @@ void main() {
         'keep this file',
       );
       await File(p.join(root, '逐文件记录.jsonl')).writeAsString(
-        '${jsonEncode({'status': 'copying', 'file': 'RAW/Day1/DSC_1.NEF', 'temporary': relative})}\n',
+        '${jsonEncode({'status': 'copying', 'file': destination, 'temporary': relative})}\n',
         mode: FileMode.append,
       );
       await TaskRecovery().recover(state);
