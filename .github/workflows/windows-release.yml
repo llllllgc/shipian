@@ -1,0 +1,84 @@
+name: Windows x64 release
+
+on:
+  push:
+    branches: [codex/windows-release-0.5.1]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install the release Flutter SDK
+        shell: pwsh
+        run: |
+          $sdk = Join-Path $env:RUNNER_TEMP 'flutter'
+          git clone --quiet --depth 1 --branch 3.47.8 https://github.com/flutter/flutter.git $sdk
+          if ($LASTEXITCODE) { throw 'Flutter SDK checkout failed' }
+          "$sdk\bin" >> $env:GITHUB_PATH
+
+      - name: Build and test
+        shell: pwsh
+        run: ./tool/build_windows.ps1
+
+      - name: Package the Windows runtime and license
+        shell: pwsh
+        run: |
+          $release = 'build/windows/x64/runner/Release'
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          $crt = Get-ChildItem "$vs/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT" -Directory | Sort-Object FullName -Descending | Select-Object -First 1
+          if (!$crt) { throw 'Missing Visual C++ runtime' }
+          Copy-Item "$($crt.FullName)/*.dll" $release
+          Copy-Item LICENSE $release
+          Compress-Archive -Path "$release/*" -DestinationPath dist/Shipian-0.5.1-Windows-x64.zip
+          Expand-Archive dist/Shipian-0.5.1-Windows-x64.zip "$env:RUNNER_TEMP/shipian-check"
+
+      - name: Check the extracted release
+        shell: pwsh
+        run: |
+          $bundle = "$env:RUNNER_TEMP/shipian-check"
+          foreach ($item in 'raw_jpg_picker.exe','shipian_raw_converter.exe','flutter_windows.dll','vcruntime140.dll','data/app.so','data/icudtl.dat','data/flutter_assets','data/ThirdParty/LibRaw-0.22.2/LICENSE.CDDL','LICENSE') {
+            if (!(Test-Path "$bundle/$item")) { throw "Missing $item in ZIP" }
+          }
+          Add-Type -AssemblyName System.Drawing
+          foreach ($format in 'jpg','png') {
+            $out = "$env:RUNNER_TEMP/decoded.$format"
+            & "$bundle/shipian_raw_converter.exe" test/fixtures/rotated.dng $out $format 90
+            if ($LASTEXITCODE) { throw "RAW conversion failed for $format" }
+            $image = [Drawing.Image]::FromFile($out)
+            try {
+              if ($image.Width -ne 192 -or $image.Height -ne 256) { throw "Unexpected image dimensions: $($image.Size)" }
+            } finally { $image.Dispose() }
+          }
+          Get-FileHash dist/Shipian-0.5.1-Windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-windows-x64
+          path: dist/Shipian-0.5.1-Windows-x64.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-windows-x64
+      - name: Attach to the existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload v0.5.1 Shipian-0.5.1-Windows-x64.zip
